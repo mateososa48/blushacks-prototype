@@ -7,7 +7,7 @@ import { parseEmotionResponse } from './parseEmotionResponse';
 
 const GEMINI_WS_URL =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
-const MODEL = 'models/gemini-2.5-flash-native-audio-preview-12-2025';
+const MODEL = 'models/gemini-2.0-flash-exp';
 
 const SYSTEM_PROMPT =
   "You are a real-time emotion detection system. Analyze the user's facial expression from video frames and voice tone from audio. " +
@@ -23,6 +23,7 @@ const DEFAULT_STATE: EmotionState = {
 
 export function useGeminiLive() {
   const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [emotionState, setEmotionState] = useState<EmotionState>(DEFAULT_STATE);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
@@ -41,24 +42,24 @@ export function useGeminiLive() {
   const start = useCallback(async () => {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     if (!apiKey) {
-      console.error('NEXT_PUBLIC_GEMINI_API_KEY is not set');
+      setError('Missing API key — set NEXT_PUBLIC_GEMINI_API_KEY in .env.local');
       return;
     }
 
+    setError(null);
     const ws = new WebSocket(`${GEMINI_WS_URL}?key=${apiKey}`);
     wsRef.current = ws;
     textBufferRef.current = '';
 
     ws.onopen = () => {
+      console.log('[Gemini] WebSocket opened, sending setup...');
       ws.send(JSON.stringify({
         setup: {
           model: MODEL,
           generationConfig: {
-            responseModalities: ['TEXT'],
-            temperature: 0.1,
+            responseModalities: 'text',
           },
           systemInstruction: {
-            role: 'user',
             parts: [{ text: SYSTEM_PROMPT }],
           },
         },
@@ -76,31 +77,40 @@ export function useGeminiLive() {
         return;
       }
 
+      console.log('[Gemini] message:', JSON.stringify(data).slice(0, 120));
+
       // Session ready — start media capture
       if (data.setupComplete !== undefined) {
+        console.log('[Gemini] setupComplete — starting media');
         setConnected(true);
 
-        const videoCapture = new VideoCapture();
-        videoCaptureRef.current = videoCapture;
-        const vStream = await videoCapture.start((base64Jpeg) => {
-          sendMessage({
-            realtimeInput: {
-              mediaChunks: [{ mimeType: 'image/jpeg', data: base64Jpeg }],
-            },
+        try {
+          const videoCapture = new VideoCapture();
+          videoCaptureRef.current = videoCapture;
+          const vStream = await videoCapture.start((base64Jpeg) => {
+            sendMessage({
+              realtimeInput: {
+                mediaChunks: [{ mimeType: 'image/jpeg', data: base64Jpeg }],
+              },
+            });
           });
-        });
-        setVideoStream(vStream);
+          setVideoStream(vStream);
 
-        const audioCapture = new AudioCapture();
-        audioCaptureRef.current = audioCapture;
-        const aStream = await audioCapture.start((base64Pcm) => {
-          sendMessage({
-            realtimeInput: {
-              mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64Pcm }],
-            },
+          const audioCapture = new AudioCapture();
+          audioCaptureRef.current = audioCapture;
+          const aStream = await audioCapture.start((base64Pcm) => {
+            sendMessage({
+              realtimeInput: {
+                mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64Pcm }],
+              },
+            });
           });
-        });
-        setAudioStream(aStream);
+          setAudioStream(aStream);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setError(`Camera/mic access failed: ${msg}`);
+          ws.close();
+        }
         return;
       }
 
@@ -124,11 +134,16 @@ export function useGeminiLive() {
     };
 
     ws.onerror = (err) => {
-      console.error('Gemini WebSocket error', err);
+      console.error('[Gemini] WebSocket error', err);
+      setError('WebSocket connection failed — check console for details');
     };
 
-    ws.onclose = () => {
+    ws.onclose = (evt) => {
+      console.log(`[Gemini] WebSocket closed: code=${evt.code} reason=${evt.reason}`);
       setConnected(false);
+      if (evt.code !== 1000 && evt.code !== 1001) {
+        setError(`Connection closed (code ${evt.code})${evt.reason ? ': ' + evt.reason : ''}`);
+      }
     };
   }, [sendMessage]);
 
@@ -138,10 +153,11 @@ export function useGeminiLive() {
     wsRef.current?.close();
     wsRef.current = null;
     setConnected(false);
+    setError(null);
     setVideoStream(null);
     setAudioStream(null);
     setEmotionState(DEFAULT_STATE);
   }, []);
 
-  return { connected, emotionState, videoStream, audioStream, start, stop };
+  return { connected, error, emotionState, videoStream, audioStream, start, stop };
 }

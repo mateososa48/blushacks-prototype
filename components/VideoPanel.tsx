@@ -6,6 +6,7 @@ interface VideoPanelProps {
   audioStream: MediaStream | null;
   transcript: string;
   connected: boolean;
+  error: string | null;
   onStart: () => void;
   onStop: () => void;
 }
@@ -15,6 +16,7 @@ export function VideoPanel({
   audioStream,
   transcript,
   connected,
+  error,
   onStart,
   onStop,
 }: VideoPanelProps) {
@@ -114,6 +116,13 @@ export function VideoPanel({
           </p>
         )}
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2">
+          <p className="text-red-400 text-xs font-mono leading-relaxed">{error}</p>
+        </div>
+      )}
 
       {/* Start / Stop button */}
       <button

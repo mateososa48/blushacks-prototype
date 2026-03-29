@@ -7,7 +7,7 @@ import { useGeminiLive } from '@/lib/useGeminiLive';
 const EmotionCanvas = dynamic(() => import('@/components/EmotionCanvas'), { ssr: false });
 
 export default function Page() {
-  const { connected, emotionState, videoStream, audioStream, start, stop } =
+  const { connected, error, emotionState, videoStream, audioStream, start, stop } =
     useGeminiLive();
 
   return (
@@ -40,6 +40,7 @@ export default function Page() {
           audioStream={audioStream}
           transcript={emotionState.transcript}
           connected={connected}
+          error={error}
           onStart={start}
           onStop={stop}
         />
