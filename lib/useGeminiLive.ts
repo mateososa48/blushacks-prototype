@@ -43,7 +43,7 @@ export function useGeminiLive() {
     textBufferRef.current = '';
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1alpha' });
 
       const session = await ai.live.connect({
         model: MODEL,
