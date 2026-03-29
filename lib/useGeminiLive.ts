@@ -5,7 +5,7 @@ import type { EmotionState } from './types';
 import { VideoCapture } from './videoCapture';
 import { parseEmotionResponse } from './parseEmotionResponse';
 
-const MODEL = 'gemini-1.5-flash';
+const MODEL = 'gemini-2.0-flash-lite';
 
 const PROMPT =
   'Analyze the facial expression in this image. ' +
