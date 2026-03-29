@@ -5,7 +5,7 @@ import type { EmotionState } from './types';
 import { VideoCapture } from './videoCapture';
 import { parseEmotionResponse } from './parseEmotionResponse';
 
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-1.5-flash';
 
 const PROMPT =
   'Analyze the facial expression in this image. ' +
@@ -101,17 +101,19 @@ export function useGeminiLive() {
             ],
           });
           const text = result.text ?? '';
-          console.log('[Gemini] response:', text.slice(0, 120));
+          console.log('[Gemini] raw:', text.slice(0, 200));
           const parsed = parseEmotionResponse(text);
+          console.log('[Gemini] parsed:', parsed);
           if (parsed) {
             setEmotionState((prev) => ({ ...parsed, transcript: prev.transcript }));
           }
         } catch (e) {
           console.error('[Gemini] generateContent error', e);
+          setError(e instanceof Error ? e.message : String(e));
         } finally {
           busyRef.current = false;
         }
-      }, 2000);
+      }, 4000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[Gemini] start failed', e);
