@@ -1,17 +1,16 @@
 'use client';
 import { useState, useRef, useCallback } from 'react';
+import { GoogleGenAI, Modality, type Session } from '@google/genai';
 import type { EmotionState } from './types';
 import { VideoCapture } from './videoCapture';
 import { AudioCapture } from './audioCapture';
 import { parseEmotionResponse } from './parseEmotionResponse';
 
-const GEMINI_WS_URL =
-  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
-const MODEL = 'models/gemini-2.5-flash-preview-native-audio-dialog';
+const MODEL = 'gemini-live-2.5-flash-preview';
 
 const SYSTEM_PROMPT =
   "You are a real-time emotion detection system. Analyze the user's facial expression from video frames and voice tone from audio. " +
-  'After analyzing each video frame, respond IMMEDIATELY with a single JSON object only (no markdown, no explanation): ' +
+  'After each analysis, respond with a single JSON object only (no markdown, no explanation): ' +
   '{"emotion":"<calm|happy|excited|sad|anxious|angry|focused|neutral>","intensity":<0.0-1.0>,"secondaryEmotion":"<emotion or null>","transcript":"<latest words spoken, empty string if silent>"}';
 
 const DEFAULT_STATE: EmotionState = {
@@ -28,16 +27,10 @@ export function useGeminiLive() {
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const sessionRef = useRef<Session | null>(null);
   const videoCaptureRef = useRef<VideoCapture | null>(null);
   const audioCaptureRef = useRef<AudioCapture | null>(null);
   const textBufferRef = useRef<string>('');
-
-  const sendMessage = useCallback((payload: unknown) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(payload));
-    }
-  }, []);
 
   const start = useCallback(async () => {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
@@ -47,111 +40,89 @@ export function useGeminiLive() {
     }
 
     setError(null);
-    const ws = new WebSocket(`${GEMINI_WS_URL}?key=${apiKey}`);
-    wsRef.current = ws;
     textBufferRef.current = '';
 
-    ws.onopen = () => {
-      console.log('[Gemini] WebSocket opened, sending setup...');
-      ws.send(JSON.stringify({
-        setup: {
-          model: MODEL,
-          generationConfig: {
-            responseModalities: 'text',
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      const session = await ai.live.connect({
+        model: MODEL,
+        callbacks: {
+          onopen() {
+            console.log('[Gemini] session open');
           },
-          systemInstruction: {
-            parts: [{ text: SYSTEM_PROMPT }],
+          onmessage(msg) {
+            console.log('[Gemini] msg:', JSON.stringify(msg).slice(0, 120));
+
+            // Accumulate streamed text
+            const parts = msg.serverContent?.modelTurn?.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (typeof part.text === 'string') {
+                  textBufferRef.current += part.text;
+                }
+              }
+            }
+
+            // Parse on turn complete
+            if (msg.serverContent?.turnComplete) {
+              const parsed = parseEmotionResponse(textBufferRef.current);
+              if (parsed) setEmotionState(parsed);
+              textBufferRef.current = '';
+            }
+          },
+          onerror(e) {
+            console.error('[Gemini] error', e);
+            setError('WebSocket error — check console');
+          },
+          onclose(e) {
+            console.log('[Gemini] closed', e);
+            setConnected(false);
+            if (e.code !== 1000 && e.code !== 1001) {
+              setError(`Connection closed (code ${e.code})${e.reason ? ': ' + e.reason : ''}`);
+            }
           },
         },
-      }));
-    };
+        config: {
+          responseModalities: [Modality.TEXT],
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        },
+      });
 
-    ws.onmessage = async (event) => {
-      let data: Record<string, unknown>;
-      try {
-        const text = event.data instanceof Blob
-          ? await (event.data as Blob).text()
-          : (event.data as string);
-        data = JSON.parse(text);
-      } catch {
-        return;
-      }
+      sessionRef.current = session;
+      setConnected(true);
 
-      console.log('[Gemini] message:', JSON.stringify(data).slice(0, 120));
+      // Start camera
+      const videoCapture = new VideoCapture();
+      videoCaptureRef.current = videoCapture;
+      const vStream = await videoCapture.start((base64Jpeg) => {
+        sessionRef.current?.sendRealtimeInput({
+          video: { data: base64Jpeg, mimeType: 'image/jpeg' },
+        });
+      });
+      setVideoStream(vStream);
 
-      // Session ready — start media capture
-      if (data.setupComplete !== undefined) {
-        console.log('[Gemini] setupComplete — starting media');
-        setConnected(true);
-
-        try {
-          const videoCapture = new VideoCapture();
-          videoCaptureRef.current = videoCapture;
-          const vStream = await videoCapture.start((base64Jpeg) => {
-            sendMessage({
-              realtimeInput: {
-                mediaChunks: [{ mimeType: 'image/jpeg', data: base64Jpeg }],
-              },
-            });
-          });
-          setVideoStream(vStream);
-
-          const audioCapture = new AudioCapture();
-          audioCaptureRef.current = audioCapture;
-          const aStream = await audioCapture.start((base64Pcm) => {
-            sendMessage({
-              realtimeInput: {
-                mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64Pcm }],
-              },
-            });
-          });
-          setAudioStream(aStream);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          setError(`Camera/mic access failed: ${msg}`);
-          ws.close();
-        }
-        return;
-      }
-
-      // Accumulate model text across streaming chunks
-      const serverContent = data.serverContent as Record<string, unknown> | undefined;
-      const parts = (serverContent?.modelTurn as Record<string, unknown> | undefined)?.parts;
-      if (Array.isArray(parts)) {
-        for (const part of parts as Array<Record<string, unknown>>) {
-          if (typeof part.text === 'string') {
-            textBufferRef.current += part.text;
-          }
-        }
-      }
-
-      // Parse when Gemini finishes its turn
-      if (serverContent?.turnComplete === true) {
-        const parsed = parseEmotionResponse(textBufferRef.current);
-        if (parsed) setEmotionState(parsed);
-        textBufferRef.current = '';
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error('[Gemini] WebSocket error', err);
-      setError('WebSocket connection failed — check console for details');
-    };
-
-    ws.onclose = (evt) => {
-      console.log(`[Gemini] WebSocket closed: code=${evt.code} reason=${evt.reason}`);
-      setConnected(false);
-      if (evt.code !== 1000 && evt.code !== 1001) {
-        setError(`Connection closed (code ${evt.code})${evt.reason ? ': ' + evt.reason : ''}`);
-      }
-    };
-  }, [sendMessage]);
+      // Start mic
+      const audioCapture = new AudioCapture();
+      audioCaptureRef.current = audioCapture;
+      const aStream = await audioCapture.start((base64Pcm) => {
+        sessionRef.current?.sendRealtimeInput({
+          audio: { data: base64Pcm, mimeType: 'audio/pcm;rate=16000' },
+        });
+      });
+      setAudioStream(aStream);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[Gemini] start failed', e);
+      setError(msg);
+    }
+  }, []);
 
   const stop = useCallback(() => {
     videoCaptureRef.current?.stop();
     audioCaptureRef.current?.stop();
-    wsRef.current?.close();
-    wsRef.current = null;
+    sessionRef.current?.close();
+    sessionRef.current = null;
     setConnected(false);
     setError(null);
     setVideoStream(null);
