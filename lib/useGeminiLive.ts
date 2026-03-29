@@ -6,8 +6,8 @@ import { AudioCapture } from './audioCapture';
 import { parseEmotionResponse } from './parseEmotionResponse';
 
 const GEMINI_WS_URL =
-  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
-const MODEL = 'models/gemini-2.0-flash-live-001';
+  'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+const MODEL = 'models/gemini-2.5-flash-preview-native-audio-dialog';
 
 const SYSTEM_PROMPT =
   "You are a real-time emotion detection system. Analyze the user's facial expression from video frames and voice tone from audio. " +
