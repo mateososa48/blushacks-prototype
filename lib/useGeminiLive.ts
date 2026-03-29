@@ -126,7 +126,7 @@ export function useGeminiLive() {
           turns: [{ role: 'user', parts: [{ text: 'analyze' }] }],
           turnComplete: true,
         });
-      }, 3000);
+      }, 1000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[Gemini] start failed', e);
