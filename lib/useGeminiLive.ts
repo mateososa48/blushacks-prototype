@@ -31,6 +31,7 @@ export function useGeminiLive() {
   const videoCaptureRef = useRef<VideoCapture | null>(null);
   const audioCaptureRef = useRef<AudioCapture | null>(null);
   const textBufferRef = useRef<string>('');
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const start = useCallback(async () => {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
@@ -118,6 +119,14 @@ export function useGeminiLive() {
         });
       });
       setAudioStream(aStream);
+
+      // Periodically ask model to analyze — native audio model won't respond unprompted
+      pollIntervalRef.current = setInterval(() => {
+        sessionRef.current?.sendClientContent({
+          turns: [{ role: 'user', parts: [{ text: 'analyze' }] }],
+          turnComplete: true,
+        });
+      }, 3000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[Gemini] start failed', e);
@@ -126,6 +135,10 @@ export function useGeminiLive() {
   }, []);
 
   const stop = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     videoCaptureRef.current?.stop();
     audioCaptureRef.current?.stop();
     sessionRef.current?.close();
