@@ -54,7 +54,7 @@ export function useGeminiLive() {
           onmessage(msg) {
             console.log('[Gemini] msg:', JSON.stringify(msg).slice(0, 120));
 
-            // Accumulate streamed text
+            // Accumulate streamed text (from text parts or audio transcription)
             const parts = msg.serverContent?.modelTurn?.parts;
             if (Array.isArray(parts)) {
               for (const part of parts) {
@@ -62,6 +62,12 @@ export function useGeminiLive() {
                   textBufferRef.current += part.text;
                 }
               }
+            }
+            // Also capture output audio transcription
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const transcript = (msg as any).serverContent?.outputAudioTranscription?.text;
+            if (typeof transcript === 'string' && transcript) {
+              textBufferRef.current += transcript;
             }
 
             // Parse on turn complete
@@ -84,7 +90,8 @@ export function useGeminiLive() {
           },
         },
         config: {
-          responseModalities: [Modality.TEXT],
+          responseModalities: [Modality.AUDIO],
+          outputAudioTranscription: {},
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         },
       });
