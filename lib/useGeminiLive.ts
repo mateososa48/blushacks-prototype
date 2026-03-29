@@ -6,7 +6,7 @@ import { VideoCapture } from './videoCapture';
 import { AudioCapture } from './audioCapture';
 import { parseEmotionResponse } from './parseEmotionResponse';
 
-const MODEL = 'gemini-live-2.5-flash-preview';
+const MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
 const SYSTEM_PROMPT =
   "You are a real-time emotion detection system. Analyze the user's facial expression from video frames and voice tone from audio. " +
@@ -43,7 +43,7 @@ export function useGeminiLive() {
     textBufferRef.current = '';
 
     try {
-      const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1alpha' });
+      const ai = new GoogleGenAI({ apiKey });
 
       const session = await ai.live.connect({
         model: MODEL,
